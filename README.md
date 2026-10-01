@@ -42,8 +42,10 @@ site always shows the last good data.
 
 ## Quota math
 
-Default config runs 6 queries × 2 sources × twice daily ≈ 180–240 requests/month,
-which fits JSearch's free tier. To add queries, edit `QUERIES` in
+Default config runs 6 JSearch queries once daily ≈ 180 requests/month,
+which fits JSearch's free tier (≈ 200–300 requests/month). If you add the
+Adzuna secrets later, Adzuna is also free for dev use and doesn't touch the
+JSearch quota. To add queries, edit `QUERIES` in
 `scripts/aggregate.py`. Tunables via env vars: `MAX_RESULTS_PER_QUERY` (25),
 `MAX_DAYS_OLD` (30), `MAX_TOTAL_JOBS` (600).
 
