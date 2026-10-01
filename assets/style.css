@@ -104,6 +104,11 @@ label { display: flex; align-items: center; gap: 8px; }
 }
 .desc { font-size: 0.9rem; color: var(--muted); margin: 0; }
 .desc .more { color: var(--accent); cursor: pointer; font-weight: 600; }
+.desc-full h4 { font-size: 0.95rem; color: var(--text); margin: 14px 0 6px; }
+.desc-full h4:first-child { margin-top: 2px; }
+.desc-full p { margin: 0 0 10px; line-height: 1.55; }
+.desc-full ul { margin: 0 0 12px; padding-left: 22px; }
+.desc-full li { margin-bottom: 5px; line-height: 1.5; }
 .contact { font-size: 0.85rem; display: grid; gap: 4px; }
 .contact a { color: var(--accent-2); text-decoration: none; }
 .contact .nolink { color: var(--muted); }

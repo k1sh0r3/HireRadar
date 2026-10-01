@@ -48,14 +48,117 @@
     return { short: t.slice(0, cut > 0 ? cut : maxLen), long: t };
   }
 
+  // --- description beautifier: turns wall-of-text postings into readable HTML ---
+  const HEADER_WORDS = [
+    "position summary", "role and responsibilities", "responsibilities",
+    "skills and qualifications", "qualifications", "requirements",
+    "preferred qualifications", "minimum qualifications", "basic requirements",
+    "about us", "about the company", "about the role", "about the team",
+    "benefits", "what you'll do", "what you will do", "nice to have",
+    "job description", "overview", "the role", "your responsibilities",
+    "equal opportunity", "compensation", "salary range", "how to apply",
+    "job duties", "key responsibilities", "education and experience"
+  ];
+  const MULTIWORD_HEADERS = HEADER_WORDS.filter(h => h.split(" ").length > 1);
+
+  function isHeaderSentence(s) {
+    const clean = s.replace(/[:.\s]+$/, "").trim();
+    if (!clean || clean.split(/\s+/).length > 8) return false;
+    const low = clean.toLowerCase();
+    if (HEADER_WORDS.includes(low)) return true;
+    if (/^[A-Z][A-Za-z'’&/()\- ]{2,60}:$/.test(s.trim())) return true;   // Title Case + colon
+    if (/^[A-Z][A-Z'’&/()\- ]{2,60}$/.test(clean)) return true;           // ALL CAPS
+    return false;
+  }
+
+  function isBulletSentence(s) {
+    return /^[•·▪●○\-*–—]\s*/.test(s) || /^\d{1,2}[.)]\s+/.test(s) || /^\(\d{1,2}\)\s*/.test(s);
+  }
+
+  function stripBullet(s) {
+    return s.replace(/^[•·▪●○\-*–—]\s*/, "").replace(/^\d{1,2}[.)]\s+/, "").replace(/^\(\d{1,2}\)\s*/, "");
+  }
+
+  function sentencesOf(block) {
+    // split on sentence boundaries without lookbehind (broad browser support)
+    const parts = block.split(/([.!?;]+)\s+(?=[A-Z0-9("“‘•\-*])/);
+    const out = [];
+    for (let i = 0; i < parts.length; i += 2)
+      out.push(((parts[i] || "") + (parts[i + 1] || "")).trim());
+    return out.filter(Boolean);
+  }
+
+  function formatDescription(raw) {
+    let t = String(raw || "");
+    // 1. HTML -> text: block tags become newlines, the rest stripped
+    t = t.replace(/<\s*(?:br|p|div|li|ul|ol|h[1-6]|tr|table)[^>]*>/gi, "\n").replace(/<[^>]+>/g, "");
+    t = t.replace(/&nbsp;/gi, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<")
+         .replace(/&gt;/g, ">").replace(/&quot;/g, '"').replace(/&#0?39;/g, "'");
+    // 2. inline bullets onto their own lines
+    t = t.replace(/[ \t]+([•·▪●○])/g, "\n$1");
+    // 3. inline numbered items "(1) ... (2) ..." -> bullets
+    if ((t.match(/\(\d{1,2}\)/g) || []).length >= 2) t = t.replace(/\s*\(\d{1,2}\)\s*/g, "\n• ");
+    // 4. multi-word section headers buried in the text -> marked header lines
+    const mw = MULTIWORD_HEADERS.map(h => h.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")).join("|");
+    t = t.replace(new RegExp("\\b(" + mw + ")\\b\\s*:?", "gi"), (m, h, off, str) => {
+      const after = (str.slice(off + m.length).trimStart()[0]) || "";
+      if (off === 0 || (/[A-Z]/.test(after) && after === after.toUpperCase()))
+        return "\n##" + h.trim() + "\n";
+      return m;
+    });
+    t = t.replace(/\n{3,}/g, "\n\n");
+
+    const chunks = t.split("\n").map(s => s.trim()).filter(Boolean);
+    let html = "", para = [], list = [];
+    const flushPara = () => {
+      if (!para.length) return;
+      for (let i = 0; i < para.length; i += 3)  // max 3 sentences per paragraph
+        html += `<p>${esc(para.slice(i, i + 3).join(" "))}</p>`;
+      para = [];
+    };
+    const flushList = () => {
+      if (!list.length) return;
+      html += `<ul>${list.map(li => `<li>${esc(li)}</li>`).join("")}</ul>`;
+      list = [];
+    };
+    for (const block of chunks) {
+      if (block.startsWith("##")) {
+        flushPara(); flushList();
+        html += `<h4>${esc(block.slice(2).trim())}</h4>`;
+        continue;
+      }
+      for (const s of sentencesOf(block)) {
+        if (isHeaderSentence(s)) {
+          flushPara(); flushList();
+          html += `<h4>${esc(s.replace(/[:.\s]+$/, ""))}</h4>`;
+        } else if (isBulletSentence(s)) {
+          flushPara();
+          list.push(stripBullet(s));
+        } else {
+          flushList();
+          para.push(s);
+        }
+      }
+    }
+    flushPara(); flushList();
+    return html || `<p>${esc(t.slice(0, 4000))}</p>`;
+  }
+
+  const fmtCache = new Map();  // descriptions don't change between renders
+  function formattedDesc(job) {
+    const key = job.id || job.apply_url;
+    if (!fmtCache.has(key)) fmtCache.set(key, formatDescription(job.description));
+    return fmtCache.get(key);
+  }
+
   function cardHTML(job, idx) {
     const tags = (job.tags || []).map(t =>
       `<span class="tag ${tagClass(t)}">${esc(t)}</span>`).join("");
     const sn = snippet(job.description, 220);
     const desc = sn.long
       ? `<p class="desc">${esc(sn.short)}… <span class="more" data-i="${idx}">more</span></p>
-         <p class="desc" data-full="${idx}" hidden>${esc(sn.long)}</p>`
-      : `<p class="desc">${esc(sn.short)}</p>`;
+         <div class="desc desc-full" data-full="${idx}" hidden>${formattedDesc(job)}</div>`
+      : `<div class="desc desc-full">${formattedDesc(job)}</div>`;
     const email = job.recruiter_email
       ? `<a href="mailto:${esc(job.recruiter_email)}">${esc(job.recruiter_email)}</a>` : "";
     const phone = job.recruiter_phone
