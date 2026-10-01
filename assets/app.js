@@ -41,13 +41,6 @@
     return days + " days ago";
   }
 
-  function snippet(text, maxLen) {
-    const t = (text || "").replace(/\s+/g, " ").trim();
-    if (t.length <= maxLen) return { short: t, long: null };
-    const cut = t.lastIndexOf(" ", maxLen);
-    return { short: t.slice(0, cut > 0 ? cut : maxLen), long: t };
-  }
-
   // --- description beautifier: turns wall-of-text postings into readable HTML ---
   const HEADER_WORDS = [
     "position summary", "role and responsibilities", "responsibilities",
@@ -88,7 +81,7 @@
     return out.filter(Boolean);
   }
 
-  function formatDescription(raw) {
+  function formatBlocks(raw) {
     let t = String(raw || "");
     // 1. HTML -> text: block tags become newlines, the rest stripped
     t = t.replace(/<\s*(?:br|p|div|li|ul|ol|h[1-6]|tr|table)[^>]*>/gi, "\n").replace(/<[^>]+>/g, "");
@@ -109,28 +102,29 @@
     t = t.replace(/\n{3,}/g, "\n\n");
 
     const chunks = t.split("\n").map(s => s.trim()).filter(Boolean);
-    let html = "", para = [], list = [];
+    const blocks = [];
+    let para = [], list = [];
     const flushPara = () => {
       if (!para.length) return;
       for (let i = 0; i < para.length; i += 3)  // max 3 sentences per paragraph
-        html += `<p>${esc(para.slice(i, i + 3).join(" "))}</p>`;
+        blocks.push(`<p>${esc(para.slice(i, i + 3).join(" "))}</p>`);
       para = [];
     };
     const flushList = () => {
       if (!list.length) return;
-      html += `<ul>${list.map(li => `<li>${esc(li)}</li>`).join("")}</ul>`;
+      blocks.push(`<ul>${list.map(li => `<li>${esc(li)}</li>`).join("")}</ul>`);
       list = [];
     };
     for (const block of chunks) {
       if (block.startsWith("##")) {
         flushPara(); flushList();
-        html += `<h4>${esc(block.slice(2).trim())}</h4>`;
+        blocks.push(`<h4>${esc(block.slice(2).trim())}</h4>`);
         continue;
       }
       for (const s of sentencesOf(block)) {
         if (isHeaderSentence(s)) {
           flushPara(); flushList();
-          html += `<h4>${esc(s.replace(/[:.\s]+$/, ""))}</h4>`;
+          blocks.push(`<h4>${esc(s.replace(/[:.\s]+$/, ""))}</h4>`);
         } else if (isBulletSentence(s)) {
           flushPara();
           list.push(stripBullet(s));
@@ -141,24 +135,33 @@
       }
     }
     flushPara(); flushList();
-    return html || `<p>${esc(t.slice(0, 4000))}</p>`;
+    return blocks;
+  }
+
+  function formatDescription(raw) {
+    const blocks = formatBlocks(raw);
+    return blocks.length ? blocks.join("")
+      : `<p>${esc(String(raw || "").replace(/\s+/g, " ").trim().slice(0, 4000))}</p>`;
   }
 
   const fmtCache = new Map();  // descriptions don't change between renders
-  function formattedDesc(job) {
+  function formattedBlocks(job) {
     const key = job.id || job.apply_url;
-    if (!fmtCache.has(key)) fmtCache.set(key, formatDescription(job.description));
+    if (!fmtCache.has(key)) fmtCache.set(key, formatBlocks(job.description));
     return fmtCache.get(key);
   }
 
   function cardHTML(job, idx) {
     const tags = (job.tags || []).map(t =>
       `<span class="tag ${tagClass(t)}">${esc(t)}</span>`).join("");
-    const sn = snippet(job.description, 220);
-    const desc = sn.long
-      ? `<p class="desc">${esc(sn.short)}… <span class="more" data-i="${idx}">more</span></p>
-         <div class="desc desc-full" data-full="${idx}" hidden>${formattedDesc(job)}</div>`
-      : `<div class="desc desc-full">${formattedDesc(job)}</div>`;
+    const blocks = formattedBlocks(job);
+    const PREVIEW_BLOCKS = 3;  // show the beautified text right away; "more" reveals the rest
+    const preview = blocks.slice(0, PREVIEW_BLOCKS).join("");
+    const rest = blocks.slice(PREVIEW_BLOCKS).join("");
+    const desc = rest
+      ? `<div class="desc desc-full">${preview} <span class="more" data-i="${idx}">more</span></div>
+         <div class="desc desc-full" data-full="${idx}" hidden>${preview}${rest}</div>`
+      : `<div class="desc desc-full">${preview || formatDescription(job.description)}</div>`;
     const email = job.recruiter_email
       ? `<a href="mailto:${esc(job.recruiter_email)}">${esc(job.recruiter_email)}</a>` : "";
     const phone = job.recruiter_phone
