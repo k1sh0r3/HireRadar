@@ -1,4 +1,4 @@
-/* Visa Jobs Board — client-side filtering over data/jobs.json */
+/* JobsBeacon — client-side filtering over data/jobs.json */
 (function () {
   "use strict";
 
