@@ -28,6 +28,12 @@ import requests
 ROOT = Path(__file__).resolve().parent.parent
 OUT_PATH = ROOT / "data" / "jobs.json"
 
+JSEARCH_HOST = "jsearch.p.rapidapi.com"
+# JSearch retired /search (now 404s) in favor of /search-v2; subscriptions
+# created before the migration may only expose /search, so we probe both.
+_JSEARCH_PATHS = ("/search-v2", "/search")
+_JSEARCH_PATH = None  # working path, resolved once per run and cached
+
 # ---------------------------------------------------------------- queries ---
 # Broad tech-role queries; the classifier below surfaces the visa-friendly ones.
 # Edit freely — each entry costs ~1 API request per source per run.
@@ -88,39 +94,95 @@ def job_id(*parts):
 
 
 # ---------------------------------------------------------------- sources ----
+def _jsearch_params(path, query, location):
+    q = f"{query} in {location}"
+    if path == "/search-v2":
+        return {"query": q, "date_posted": "month"}  # v2 is cursor-based: no page/num_pages
+    return {"query": q, "page": "1", "num_pages": "1", "date_posted": "month"}
+
+
+def _jsearch_rows(payload):
+    """Unwrap the job list from v1 ({data: [...]}) or v2 ({data: {jobs: [...]}}) shapes."""
+    data = payload.get("data", payload) if isinstance(payload, dict) else []
+    if isinstance(data, list):
+        return data
+    if isinstance(data, dict):
+        for key in ("jobs", "results", "data"):
+            nested = data.get(key)
+            if isinstance(nested, list):
+                return nested
+    return []
+
+
+def _normalize_jsearch_item(item):
+    """Map v1 fields, falling back to v2-only variants (job_location, apply_options, …)."""
+    apply_link = item.get("job_apply_link") or ""
+    if not apply_link:
+        for opt in item.get("apply_options") or []:
+            if isinstance(opt, dict):
+                apply_link = opt.get("apply_link") or opt.get("link") or ""
+                if apply_link:
+                    break
+    posted = item.get("job_posted_at_datetime_utc")
+    ts = item.get("job_posted_at_timestamp")
+    if not posted and isinstance(ts, (int, float)):
+        posted = datetime.fromtimestamp(ts, tz=timezone.utc).isoformat()
+    remote = item.get("job_is_remote")
+    if not isinstance(remote, bool):
+        arrangement = str(item.get("job_work_arrangement") or item.get("work_arrangement") or "")
+        remote = bool(re.search(r"remote|work\s*from\s*home", arrangement, re.IGNORECASE))
+    emp_types = item.get("job_employment_types") or []
+    return {
+        "title": item.get("job_title") or "",
+        "company": item.get("employer_name") or "",
+        "location": ", ".join(x for x in [item.get("job_city"), item.get("job_state")] if x)
+                    or item.get("job_country") or item.get("job_location") or "",
+        "description": item.get("job_description") or "",
+        "apply_url": apply_link,
+        "posted_at": posted,
+        "source": item.get("job_publisher") or "JSearch",
+        "remote": bool(remote),
+        "employment_type": item.get("job_employment_type")
+                           or (emp_types[0] if emp_types else "") or "",
+    }
+
+
 def fetch_jsearch(api_key, query, location, max_results):
     """JSearch via RapidAPI — aggregates LinkedIn / Indeed / Glassdoor / ZipRecruiter.
+
+    Tries /search-v2 first (the old /search path was retired and now 404s),
+    falling back to /search for subscriptions that predate the migration.
+    The working path is cached for the rest of the run.
 
     Returns (jobs, ok): ok=False means the API call itself failed, so the caller
     can tell "no results" apart from "source is down".
     """
-    jobs = []
-    try:
-        resp = requests.get(
-            "https://jsearch.p.rapidapi.com/search",
-            headers={"X-RapidAPI-Key": api_key, "X-RapidAPI-Host": "jsearch.p.rapidapi.com"},
-            params={"query": f"{query} in {location}", "page": "1",
-                    "num_pages": "1", "date_posted": "month"},
-            timeout=30,
-        )
-        resp.raise_for_status()
-        for item in resp.json().get("data", [])[:max_results]:
-            jobs.append({
-                "title": item.get("job_title") or "",
-                "company": item.get("employer_name") or "",
-                "location": ", ".join(x for x in [item.get("job_city"), item.get("job_state")]
-                                      if x) or item.get("job_country") or "",
-                "description": item.get("job_description") or "",
-                "apply_url": item.get("job_apply_link") or "",
-                "posted_at": item.get("job_posted_at_datetime_utc"),
-                "source": item.get("job_publisher") or "JSearch",
-                "remote": bool(item.get("job_is_remote")),
-                "employment_type": item.get("job_employment_type") or "",
-            })
-    except Exception as e:  # noqa: BLE001 — one bad source must not kill the run
-        print(f"[jsearch] error for '{query}': {e}", file=sys.stderr)
-        return jobs, False
-    return jobs, True
+    global _JSEARCH_PATH
+    headers = {"X-RapidAPI-Key": api_key, "X-RapidAPI-Host": JSEARCH_HOST}
+    paths = [_JSEARCH_PATH] if _JSEARCH_PATH else list(_JSEARCH_PATHS)
+    for path in paths:
+        try:
+            resp = requests.get(f"https://{JSEARCH_HOST}{path}", headers=headers,
+                                params=_jsearch_params(path, query, location), timeout=30)
+        except Exception as e:  # noqa: BLE001 — network error; other path won't help
+            print(f"[jsearch] error for '{query}': {e}", file=sys.stderr)
+            return [], False
+        if resp.status_code == 404 and "does not exist" in resp.text.lower():
+            continue  # endpoint not exposed on this subscription — try the other path
+        if resp.status_code != 200:
+            print(f"[jsearch] error for '{query}': HTTP {resp.status_code}: "
+                  f"{resp.text[:200]}", file=sys.stderr)
+            return [], False
+        try:
+            rows = _jsearch_rows(resp.json())
+        except Exception as e:  # noqa: BLE001 — 200 with an unparsable body
+            print(f"[jsearch] error for '{query}': bad response body: {e}", file=sys.stderr)
+            return [], False
+        _JSEARCH_PATH = path
+        return [_normalize_jsearch_item(it) for it in rows[:max_results]], True
+    print("[jsearch] error: subscription exposes neither /search-v2 nor /search",
+          file=sys.stderr)
+    return [], False
 
 
 def fetch_adzuna(app_id, app_key, query, location, max_results, max_days_old):
