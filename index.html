@@ -1,0 +1,71 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Visa Jobs Board — C2C, W-2, H-1B, OPT &amp; STEM OPT positions</title>
+<meta name="description" content="Fresh tech job listings filtered for C2C, W-2, H-1B sponsorship, OPT and STEM OPT friendliness. Updated automatically.">
+<link rel="stylesheet" href="assets/style.css">
+</head>
+<body>
+<header class="site-header">
+  <div class="wrap">
+    <h1>Visa Jobs Board</h1>
+    <p class="tagline">Tech jobs filtered for <strong>C2C</strong>, <strong>W-2</strong>, <strong>H-1B sponsorship</strong>, <strong>OPT</strong> &amp; <strong>STEM OPT</strong> friendliness.</p>
+    <div class="stats" id="stats"><span id="job-count">…</span> jobs · updated <span id="updated-at">…</span></div>
+  </div>
+</header>
+
+<main class="wrap">
+  <section class="controls" aria-label="Filters">
+    <div class="row">
+      <input id="q" type="search" placeholder="Search title, company, or keyword…" autocomplete="off">
+      <input id="loc" type="text" placeholder="Location (e.g. Dallas, Remote)…" autocomplete="off">
+    </div>
+    <div class="row">
+      <div class="pills" id="tag-pills" role="group" aria-label="Visa and employment type filters">
+        <button data-tag="C2C" aria-pressed="false">C2C</button>
+        <button data-tag="W-2" aria-pressed="false">W-2</button>
+        <button data-tag="H-1B" aria-pressed="false">H-1B</button>
+        <button data-tag="OPT" aria-pressed="false">OPT</button>
+        <button data-tag="STEM OPT" aria-pressed="false">STEM OPT</button>
+      </div>
+    </div>
+    <div class="row row-small">
+      <label>Source
+        <select id="source"><option value="">All sources</option></select>
+      </label>
+      <label>Posted
+        <select id="age">
+          <option value="">Any time</option>
+          <option value="3">Last 3 days</option>
+          <option value="7" selected>Last 7 days</option>
+          <option value="14">Last 14 days</option>
+          <option value="30">Last 30 days</option>
+        </select>
+      </label>
+      <label class="check"><input type="checkbox" id="remote-only"> Remote only</label>
+      <label class="check"><input type="checkbox" id="has-contact"> Has recruiter contact</label>
+      <button id="reset" type="button">Reset</button>
+    </div>
+    <div class="row deep-links">
+      <span>Can't find it here? Search the same query on:</span>
+      <a id="dice-link" href="https://www.dice.com/jobs" target="_blank" rel="noopener">Dice</a>
+      <a id="monster-link" href="https://www.monster.com/jobs" target="_blank" rel="noopener">Monster</a>
+    </div>
+  </section>
+
+  <section id="results" aria-live="polite"></section>
+  <p class="empty" id="empty" hidden>No jobs match your filters. Try widening the search.</p>
+</main>
+
+<footer class="site-footer">
+  <div class="wrap">
+    <p>Listings aggregated from public job APIs. Always verify details on the original posting before applying.</p>
+    <p class="attr">Job search powered by <a href="https://www.adzuna.com" target="_blank" rel="noopener">Adzuna</a> · Data refreshes automatically.</p>
+  </div>
+</footer>
+
+<script src="assets/app.js"></script>
+</body>
+</html>
