@@ -1,4 +1,4 @@
-# Visa Jobs Board
+# JobsBeacon
 
 A job board for visa-friendly tech positions — **C2C**, **W-2**, **H-1B sponsorship**,
 **OPT** and **STEM OPT** — refreshed automatically twice a day and hosted free on
