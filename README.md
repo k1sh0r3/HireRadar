@@ -1,4 +1,4 @@
-# JobsBeacon
+# JobsBeacon - https://k1sh0r3.github.io/JobsBeacon/
 
 A job board for visa-friendly tech positions — **C2C**, **W-2**, **H-1B sponsorship**,
 **OPT** and **STEM OPT** — refreshed automatically once a day and hosted free on
