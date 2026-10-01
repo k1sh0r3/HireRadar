@@ -1,4 +1,4 @@
-/* JobsBeacon — client-side filtering over data/jobs.json */
+/* HireRadar — client-side filtering over data/jobs.json */
 (function () {
   "use strict";
 
