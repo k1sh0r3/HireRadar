@@ -42,9 +42,16 @@ QUERIES = [
     {"query": "java developer", "location": "United States"},
     {"query": "python developer", "location": "United States"},
     {"query": "data engineer", "location": "United States"},
+    {"query": "react developer", "location": "United States"},
+    {"query": "data scientist", "location": "United States"},
+    {"query": ".net developer", "location": "United States"},
     {"query": "software engineer OPT", "location": "United States"},
     {"query": "developer C2C", "location": "United States"},
 ]
+
+# Remotive (free, keyless): remote-only jobs. Their API guidance asks for
+# only a few requests per day, so keep this list short.
+REMOTIVE_QUERIES = ["software engineer", "data engineer", "python developer", "java developer"]
 
 # ---------------------------------------------------------- classification ---
 TAG_PATTERNS = {
@@ -220,6 +227,53 @@ def fetch_adzuna(app_id, app_key, query, location, max_results, max_days_old):
     return jobs, True
 
 
+def fetch_remotive(query, max_results):
+    """Remotive API — free, keyless, remote-only jobs. Returns (jobs, ok).
+
+    Terms require linking back to the Remotive listing (we use their URL as
+    the apply link) and crediting Remotive as a source (footer of the site).
+    """
+    jobs = []
+    try:
+        resp = requests.get(
+            "https://remotive.com/api/remote-jobs",
+            params={"search": query, "limit": max_results},
+            timeout=30,
+        )
+        if resp.status_code != 200:
+            print(f"[remotive] error for '{query}': HTTP {resp.status_code}", file=sys.stderr)
+            return [], False
+        for item in resp.json().get("jobs", [])[:max_results]:
+            jobs.append({
+                "title": item.get("title") or "",
+                "company": item.get("company_name") or "",
+                "location": item.get("candidate_required_location") or "Remote",
+                "description": item.get("description") or "",
+                "apply_url": item.get("url") or "",
+                "posted_at": item.get("publication_date"),
+                "source": "Remotive",
+                "remote": True,
+                "employment_type": (item.get("job_type") or "").replace("_", " ").title(),
+            })
+    except Exception as e:  # noqa: BLE001
+        print(f"[remotive] error for '{query}': {e}", file=sys.stderr)
+        return [], False
+    return jobs, True
+
+
+def _too_old(posted_at, cutoff):
+    """True when a listing is older than the retention cutoff."""
+    if not posted_at:
+        return False
+    try:
+        d = datetime.fromisoformat(str(posted_at).replace("Z", "+00:00"))
+        if d.tzinfo is None:
+            d = d.replace(tzinfo=timezone.utc)
+        return d < cutoff
+    except ValueError:
+        return False
+
+
 # ------------------------------------------------------------------- main ----
 def main():
     max_results = int(os.getenv("MAX_RESULTS_PER_QUERY", "25"))
@@ -242,9 +296,10 @@ def main():
                                        max_results, max_days_old)
             raw += fetched
             any_ok = any_ok or ok
-    if not rapid_key and not (adzuna_id and adzuna_key):
-        print("No API credentials set — keeping existing data.", file=sys.stderr)
-        return 0
+    for rq in REMOTIVE_QUERIES:  # free, keyless
+        fetched, ok = fetch_remotive(rq, max_results)
+        raw += fetched
+        any_ok = any_ok or ok
 
     seen, jobs = set(), []
     for r in raw:
@@ -260,6 +315,8 @@ def main():
         if r["posted_at"]:
             try:
                 posted = datetime.fromisoformat(str(r["posted_at"]).replace("Z", "+00:00"))
+                if posted.tzinfo is None:  # e.g. Remotive's naive timestamps -> UTC
+                    posted = posted.replace(tzinfo=timezone.utc)
             except ValueError:
                 posted = None
         if posted and posted < cutoff:
@@ -281,7 +338,24 @@ def main():
             "recruiter_phone": phone,
         })
 
-    jobs.sort(key=lambda j: j["posted_at"] or "", reverse=True)
+    # Merge with previous listings so each refresh accumulates instead of
+    # replacing. Listings persist across runs; only ones older than the
+    # retention window (or past the cap) are pruned.
+    now_iso = datetime.now(timezone.utc).isoformat()
+    previous = {}
+    try:
+        old_data = json.loads(OUT_PATH.read_text())
+        for j in old_data.get("jobs", []):
+            if j.get("id"):
+                previous[j["id"]] = j
+    except Exception:  # noqa: BLE001
+        pass
+    for j in jobs:
+        prev = previous.get(j["id"])
+        j["first_seen_at"] = prev.get("first_seen_at") if prev else now_iso
+        previous[j["id"]] = j  # refresh all fields for re-fetched jobs
+    jobs = [j for j in previous.values() if not _too_old(j.get("posted_at"), cutoff)]
+    jobs.sort(key=lambda j: j["posted_at"] or j.get("first_seen_at") or "", reverse=True)
     jobs = jobs[:max_total]
 
     if not jobs and not any_ok:

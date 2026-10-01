@@ -10,11 +10,12 @@ GitHub Pages.
 GitHub Actions (cron, daily)
         │
         ▼
-scripts/aggregate.py ──► JSearch API (LinkedIn / Indeed / Glassdoor / ZipRecruiter)
-        │                     │
-        │              classify: C2C / W-2 / H-1B / OPT / STEM OPT keywords
-        │              extract: recruiter email + phone from the posting text
-        │              dedupe + sort newest-first
+scripts/aggregate.py ──┬─► JSearch API (LinkedIn / Indeed / Glassdoor / ZipRecruiter)
+                       └─► Remotive API (free, keyless, remote jobs)
+        │
+        │   classify: C2C / W-2 / H-1B / OPT / STEM OPT keywords
+        │   extract: recruiter email + phone from the posting text
+        │   merge with previous listings, dedupe, prune > 30 days old
         ▼
 data/jobs.json ──► static site (index.html + assets/) filters it in your browser
 ```
@@ -37,10 +38,13 @@ site always shows the last good data.
 
 ## Quota math
 
-Default config runs 6 JSearch queries once daily ≈ 180 requests/month,
-which fits JSearch's free tier (≈ 200–300 requests/month).
-To add queries, edit `QUERIES` in
-`scripts/aggregate.py`. Tunables via env vars: `MAX_RESULTS_PER_QUERY` (25),
+Default config runs 9 JSearch queries + 4 Remotive searches once daily
+≈ 270 JSearch requests/month — near the top of JSearch's free tier
+(≈ 200–300), so keep the query list short. Remotive is free and keyless
+(its guidance asks for only a few requests per day).
+Each refresh *accumulates*: listings persist across runs and are pruned
+only when older than 30 days (`MAX_DAYS_OLD`) or beyond the 600-listing
+cap (`MAX_TOTAL_JOBS`). Tunables via env vars: `MAX_RESULTS_PER_QUERY` (25),
 `MAX_DAYS_OLD` (30), `MAX_TOTAL_JOBS` (600).
 
 ## Run the aggregator locally

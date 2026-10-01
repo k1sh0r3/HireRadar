@@ -63,10 +63,12 @@
     const contact = (email || phone)
       ? `<div class="contact"><span>Recruiter: ${email}${email && phone ? " · " : ""}${phone}</span></div>`
       : `<div class="contact"><span class="nolink">No recruiter contact listed</span></div>`;
+    const isNew = job.first_seen_at &&
+      (Date.now() - new Date(job.first_seen_at).getTime()) < 3 * 86400000;
     return `<article class="card">
       <h2><a href="${esc(job.apply_url)}" target="_blank" rel="noopener">${esc(job.title)}</a></h2>
       <p class="company">${esc(job.company)}${job.remote ? " · Remote" : ""}</p>
-      <div class="meta"><span>${esc(job.location || "Location not listed")}</span><span>${esc(fmtDate(job.posted_at))}</span></div>
+      <div class="meta"><span>${esc(job.location || "Location not listed")}</span><span>Posted ${esc(fmtDate(job.posted_at))}</span>${isNew ? `<span class="new-badge">New</span>` : ""}</div>
       <div class="tags">${tags}</div>
       ${desc}
       ${contact}
