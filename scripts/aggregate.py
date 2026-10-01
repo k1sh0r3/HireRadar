@@ -89,7 +89,11 @@ def job_id(*parts):
 
 # ---------------------------------------------------------------- sources ----
 def fetch_jsearch(api_key, query, location, max_results):
-    """JSearch via RapidAPI — aggregates LinkedIn / Indeed / Glassdoor / ZipRecruiter."""
+    """JSearch via RapidAPI — aggregates LinkedIn / Indeed / Glassdoor / ZipRecruiter.
+
+    Returns (jobs, ok): ok=False means the API call itself failed, so the caller
+    can tell "no results" apart from "source is down".
+    """
     jobs = []
     try:
         resp = requests.get(
@@ -115,11 +119,15 @@ def fetch_jsearch(api_key, query, location, max_results):
             })
     except Exception as e:  # noqa: BLE001 — one bad source must not kill the run
         print(f"[jsearch] error for '{query}': {e}", file=sys.stderr)
-    return jobs
+        return jobs, False
+    return jobs, True
 
 
 def fetch_adzuna(app_id, app_key, query, location, max_results, max_days_old):
-    """Adzuna official API — free tier, requires attribution (see site footer)."""
+    """Adzuna official API — free tier, requires attribution (see site footer).
+
+    Returns (jobs, ok): ok=False means the API call itself failed.
+    """
     jobs = []
     try:
         resp = requests.get(
@@ -146,7 +154,8 @@ def fetch_adzuna(app_id, app_key, query, location, max_results, max_days_old):
             })
     except Exception as e:  # noqa: BLE001
         print(f"[adzuna] error for '{query}': {e}", file=sys.stderr)
-    return jobs
+        return jobs, False
+    return jobs, True
 
 
 # ------------------------------------------------------------------- main ----
@@ -160,13 +169,17 @@ def main():
     adzuna_id = os.getenv("ADZUNA_APP_ID")
     adzuna_key = os.getenv("ADZUNA_APP_KEY")
 
-    raw = []
+    raw, any_ok = [], False
     for q in QUERIES:
         if rapid_key:
-            raw += fetch_jsearch(rapid_key, q["query"], q["location"], max_results)
+            fetched, ok = fetch_jsearch(rapid_key, q["query"], q["location"], max_results)
+            raw += fetched
+            any_ok = any_ok or ok
         if adzuna_id and adzuna_key:
-            raw += fetch_adzuna(adzuna_id, adzuna_key, q["query"], q["location"],
-                                max_results, max_days_old)
+            fetched, ok = fetch_adzuna(adzuna_id, adzuna_key, q["query"], q["location"],
+                                       max_results, max_days_old)
+            raw += fetched
+            any_ok = any_ok or ok
     if not rapid_key and not (adzuna_id and adzuna_key):
         print("No API credentials set — keeping existing data.", file=sys.stderr)
         return 0
@@ -208,6 +221,12 @@ def main():
 
     jobs.sort(key=lambda j: j["posted_at"] or "", reverse=True)
     jobs = jobs[:max_total]
+
+    if not jobs and not any_ok:
+        # Every source failed (bad key, outage, …) — keep the last good data
+        # instead of blanking the site.
+        print("All sources failed — keeping existing data.", file=sys.stderr)
+        return 1
 
     OUT_PATH.parent.mkdir(parents=True, exist_ok=True)
     OUT_PATH.write_text(json.dumps({
