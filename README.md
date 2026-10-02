@@ -11,6 +11,7 @@ GitHub Actions (cron, daily)
         │
         ▼
 scripts/aggregate.py ──┬─► JSearch API (LinkedIn / Indeed / Glassdoor / ZipRecruiter)
+                       ├──► Adzuna API (free tier, needs app id + key)
                        └─► Remotive API (free, keyless, remote jobs)
         │
         │   classify: C2C / W-2 / H-1B / OPT / STEM OPT keywords
@@ -29,12 +30,15 @@ and commits the results — no server needed.
    subscribe to the **JSearch** API (free tier ≈ 200–300 requests/month), and copy your key.
 2. In this repo go to **Settings → Secrets and variables → Actions → New repository secret**
    and add:
-   - `RAPIDAPI_KEY`
+   - `RAPIDAPI_KEY` (required — JSearch)
+   - `ADZUNA_APP_ID` and `ADZUNA_APP_KEY` (optional second source — free
+     [Adzuna API](https://developer.adzuna.com/) credentials; Remotive needs no key)
 3. **Enable Pages:** Settings → Pages → *Deploy from a branch* → branch `main`, folder `/ (root)`.
 4. Trigger the first refresh manually: **Actions → Refresh job listings → Run workflow**.
 
-Without secrets the workflow keeps the existing `data/jobs.json` untouched, so the
-site always shows the last good data.
+Without keys the corresponding source is simply skipped; if **every** source fails
+(bad keys, outage, …), the workflow keeps the existing `data/jobs.json` untouched,
+so the site always shows the last good data.
 
 ## Quota math
 
@@ -45,7 +49,8 @@ Default config runs 9 JSearch queries + 4 Remotive searches once daily
 Each refresh *accumulates*: listings persist across runs and are pruned
 only when older than 30 days (`MAX_DAYS_OLD`) or beyond the 600-listing
 cap (`MAX_TOTAL_JOBS`). Tunables via env vars: `MAX_RESULTS_PER_QUERY` (25),
-`MAX_DAYS_OLD` (30), `MAX_TOTAL_JOBS` (600).
+`MAX_DAYS_OLD` (30), `MAX_TOTAL_JOBS` (600). Adzuna runs the same 9 queries once
+daily (9 × 30 ≈ 270 requests/month — inside its free tier of 2,500/month).
 
 ## Run the aggregator locally
 
