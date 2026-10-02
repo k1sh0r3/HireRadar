@@ -2,7 +2,7 @@ name: Refresh job listings
 
 on:
   schedule:
-    # Once daily at 6am UTC (~180 JSearch requests/month, inside the free tier)
+    # Once daily at 6am UTC (~270 JSearch requests/month, inside the free tier)
     - cron: "0 6 * * *"
   workflow_dispatch: {}
 
