@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """
-Aggregate visa-friendly tech job listings from JSearch (RapidAPI) and Adzuna,
+Aggregate visa-friendly tech job listings from JSearch (RapidAPI), Adzuna,
+keyless startup ATS boards (Ashby / Greenhouse / Lever), and HN "Who is hiring?",
 classify them for C2C / W-2 / H-1B / OPT / STEM OPT, extract recruiter contact
 info where posted, and write data/jobs.json for the static site.
 
@@ -16,6 +17,7 @@ Tunables (environment):
 """
 
 import hashlib
+import html
 import json
 import os
 import re
@@ -35,23 +37,60 @@ _JSEARCH_PATHS = ("/search-v2", "/search")
 _JSEARCH_PATH = None  # working path, resolved once per run and cached
 
 # ---------------------------------------------------------------- queries ---
-# Broad tech-role queries; the classifier below surfaces the visa-friendly ones.
+# AI/ML-tuned queries; the classifier below surfaces the visa-friendly ones.
 # Edit freely — each entry costs ~1 API request per source per run.
 QUERIES = [
-    {"query": "software engineer", "location": "United States"},
-    {"query": "java developer", "location": "United States"},
-    {"query": "python developer", "location": "United States"},
+    {"query": "machine learning engineer", "location": "United States"},
+    {"query": "AI engineer", "location": "United States"},
+    {"query": "LLM engineer", "location": "United States"},
+    {"query": "MLOps engineer", "location": "United States"},
+    {"query": "AI software engineer", "location": "United States"},
     {"query": "data engineer", "location": "United States"},
-    {"query": "react developer", "location": "United States"},
     {"query": "data scientist", "location": "United States"},
-    {"query": ".net developer", "location": "United States"},
     {"query": "software engineer OPT", "location": "United States"},
-    {"query": "developer C2C", "location": "United States"},
+    {"query": "software engineer", "location": "United States"},
 ]
 
 # Remotive (free, keyless): remote-only jobs. Their API guidance asks for
 # only a few requests per day, so keep this list short.
-REMOTIVE_QUERIES = ["software engineer", "data engineer", "python developer", "java developer"]
+REMOTIVE_QUERIES = ["machine learning engineer", "AI engineer", "data engineer", "software engineer"]
+
+# ------------------------------------------------------- startup boards -----
+# Keyless public ATS APIs. Startup-heavy and AI-dense — exactly where AI
+# software-engineering roles concentrate. Slugs verified live 2026-10-04;
+# dead slugs are skipped silently so these lists can be extended freely.
+ASHBY_BOARDS = {
+    "openai": "OpenAI", "perplexity": "Perplexity", "elevenlabs": "ElevenLabs",
+    "cohere": "Cohere", "cursor": "Cursor", "sierra": "Sierra",
+    "writer": "Writer", "modal": "Modal", "langchain": "LangChain",
+}
+GREENHOUSE_BOARDS = {
+    "anthropic": "Anthropic", "databricks": "Databricks", "scaleai": "Scale AI",
+}
+LEVER_BOARDS = {"palantir": "Palantir"}
+
+# Boards list every opening (sales, marketing, …) — keep tech roles only so
+# the board stays a tech board and the job cap isn't eaten by noise.
+TECH_TITLE_RE = re.compile(
+    r"engineer|developer|data scien|machine learning|researcher|scientist|"
+    r"research scien|devops|\bsre\b|software|architect|data analyst|"
+    r"\bqa\b|systems|infrastructure|platform|technical",
+    re.IGNORECASE,
+)
+
+# Role words used to tell "Role | Company" apart from "Company — Role".
+ROLE_CHUNK_RE = re.compile(
+    r"engineer|developer|designer|scientist|researcher|manager|analyst|architect|intern",
+    re.IGNORECASE,
+)
+# HN "Who is hiring?" — monthly thread, startup-dense. Comments are freeform;
+# keep the ones that look AI/ML/data/engineering relevant.
+HN_KEEP_RE = re.compile(
+    r"\bai\b|machine learning|deep learning|\bllm\b|large language|"
+    r"\bml\b|artificial intelligence|data scien|mlops|generative ai|"
+    r"\bgenai\b|engineer|developer|software|research scien",
+    re.IGNORECASE,
+)
 
 # ---------------------------------------------------------- classification ---
 TAG_PATTERNS = {
@@ -261,6 +300,188 @@ def fetch_remotive(query, max_results):
     return jobs, True
 
 
+def _strip_html(html_text):
+    """Plain text out of an HTML blob for descriptions."""
+    text = re.sub(r"<[^>]+>", " ", html_text or "")
+    text = html.unescape(text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def _board_get(url, label):
+    """GET a keyless board endpoint. Returns (parsed_json, ok)."""
+    try:
+        resp = requests.get(url, timeout=30, headers={"User-Agent": "HireRadar/1.0"})
+        resp.raise_for_status()
+        return resp.json(), True
+    except Exception as e:  # noqa: BLE001
+        print(f"[{label}] board fetch error: {e}", file=sys.stderr)
+        return None, False
+
+
+def fetch_ashby(slug, company, max_results):
+    """Ashby public posting API — keyless. Returns (jobs, ok)."""
+    data, ok = _board_get(f"https://api.ashbyhq.com/posting-api/job-board/{slug}", "ashby")
+    if not ok:
+        return [], False
+    jobs = []
+    for j in data.get("jobs") or []:
+        title = j.get("title") or ""
+        if not TECH_TITLE_RE.search(title):
+            continue
+        jobs.append({
+            "title": title,
+            "company": company,
+            "location": j.get("location") or "",
+            "description": j.get("descriptionPlain") or "",
+            "apply_url": j.get("jobUrl") or "",
+            "posted_at": j.get("publishedAt"),
+            "source": "Ashby",
+            "remote": bool(j.get("isRemote")),
+            "employment_type": (j.get("employmentType") or "").replace("FullTime", "Full-time"),
+        })
+        if len(jobs) >= max_results:
+            break
+    return jobs, True
+
+
+def fetch_greenhouse(token, company, max_results):
+    """Greenhouse public boards API — keyless. Returns (jobs, ok)."""
+    data, ok = _board_get(
+        f"https://boards-api.greenhouse.io/v1/boards/{token}/jobs?content=true", "greenhouse")
+    if not ok:
+        return [], False
+    jobs = []
+    for j in data.get("jobs") or []:
+        title = j.get("title") or ""
+        if not TECH_TITLE_RE.search(title):
+            continue
+        loc = j.get("location") or {}
+        jobs.append({
+            "title": title,
+            "company": company,
+            "location": loc.get("name", "") if isinstance(loc, dict) else "",
+            "description": _strip_html(j.get("content") or ""),
+            "apply_url": j.get("absolute_url") or "",
+            "posted_at": j.get("updated_at"),
+            "source": "Greenhouse",
+            "remote": "remote" in (loc.get("name", "") if isinstance(loc, dict) else "").lower(),
+            "employment_type": "",
+        })
+        if len(jobs) >= max_results:
+            break
+    return jobs, True
+
+
+def fetch_lever(site, company, max_results):
+    """Lever public postings API — keyless. Returns (jobs, ok)."""
+    data, ok = _board_get(f"https://api.lever.co/v0/postings/{site}?mode=json", "lever")
+    if not ok:
+        return [], False
+    jobs = []
+    for j in data or []:
+        title = j.get("text") or ""
+        if not TECH_TITLE_RE.search(title):
+            continue
+        cats = j.get("categories") or {}
+        created = j.get("createdAt")
+        posted = None
+        if isinstance(created, (int, float)):
+            posted = datetime.fromtimestamp(created / 1000, tz=timezone.utc).isoformat()
+        jobs.append({
+            "title": title,
+            "company": company,
+            "location": cats.get("location") or "",
+            "description": j.get("descriptionPlain") or "",
+            "apply_url": j.get("hostedUrl") or "",
+            "posted_at": posted,
+            "source": "Lever",
+            "remote": "remote" in str(j.get("workplaceType") or "").lower(),
+            "employment_type": cats.get("commitment") or "",
+        })
+        if len(jobs) >= max_results:
+            break
+    return jobs, True
+
+
+def fetch_hn_hiring(max_results):
+    """Current month's 'Ask HN: Who is hiring?' thread via the Algolia API — keyless.
+
+    Keeps top-level comments that look AI/ML/engineering relevant.
+    Returns (jobs, ok).
+    """
+    try:
+        now = datetime.now(timezone.utc)
+        # Threads post on the 1st; early in the month the current one may not
+        # exist yet, so fall back to last month's.
+        month_queries = [now.strftime("%B %Y"),
+                         (now.replace(day=1) - timedelta(days=1)).strftime("%B %Y")]
+        thread_id, thread_month = None, ""
+        for mq in month_queries:
+            resp = requests.get(
+                "https://hn.algolia.com/api/v1/search",
+                params={"query": f"Ask HN: Who is hiring? ({mq})",
+                        "tags": "story", "hitsPerPage": 10},
+                timeout=30, headers={"User-Agent": "HireRadar/1.0"})
+            resp.raise_for_status()
+            hits = [h for h in resp.json().get("hits", [])
+                    if h.get("author") == "whoishiring" and "hiring?" in (h.get("title") or "")]
+            if hits:
+                best = max(hits, key=lambda h: h.get("created_at", ""))
+                thread_id, thread_month = best.get("objectID"), mq
+                break
+        if not thread_id:
+            return [], True
+        resp = requests.get(f"https://hn.algolia.com/api/v1/items/{thread_id}",
+                            timeout=30, headers={"User-Agent": "HireRadar/1.0"})
+        resp.raise_for_status()
+        children = resp.json().get("children") or []
+    except Exception as e:  # noqa: BLE001
+        print(f"[hn] fetch error: {e}", file=sys.stderr)
+        return [], False
+    jobs = []
+    for c in children:
+        text = _strip_html(c.get("text") or "")
+        if not HN_KEEP_RE.search(text):
+            continue
+        first = text.split("\n")[0].strip()
+        # Split on em/en dashes, pipes, or space-separated hyphens — but NOT
+        # the hyphens inside words like "Full-Stack".
+        chunks = [x.strip() for x in re.split(r"\s*[—–|]\s*|\s+-\s+", first) if x.strip()]
+        title, company, location = "", "HN Hiring", ""
+        if chunks:
+            role_idx = next((i for i, c in enumerate(chunks)
+                             if ROLE_CHUNK_RE.search(c)), None)
+            if role_idx is None:
+                # No recognizable role chunk — keep the opener as the title.
+                title = first[:120]
+            else:
+                title = chunks[role_idx][:120]
+                rest = [c for i, c in enumerate(chunks)
+                        if i != role_idx and not ROLE_CHUNK_RE.search(c)
+                        and len(c) <= 80]
+                if rest:
+                    company = re.sub(r"\s*\(.*?\)\s*", "", rest[0]).strip()[:80] or "HN Hiring"
+                    m = re.search(r"\((.*?)\)", rest[0])
+                    location = m.group(1).strip() if m else ""
+        if not title:
+            continue
+        jobs.append({
+            "title": title,
+            "company": company,
+            "location": location,
+            "description": text,
+            "apply_url": f"https://news.ycombinator.com/item?id={c.get('id')}",
+            "posted_at": c.get("created_at"),
+            "source": "HN Hiring",
+            "remote": "remote" in text.lower(),
+            "employment_type": "",
+        })
+        if len(jobs) >= max_results:
+            break
+    return jobs, True
+
+
 def _too_old(posted_at, cutoff):
     """True when a listing is older than the retention cutoff."""
     if not posted_at:
@@ -300,6 +521,22 @@ def main():
         fetched, ok = fetch_remotive(rq, max_results)
         raw += fetched
         any_ok = any_ok or ok
+    # Keyless startup boards (Ashby / Greenhouse / Lever) + HN hiring thread.
+    for slug, company in ASHBY_BOARDS.items():
+        fetched, ok = fetch_ashby(slug, company, 80)
+        raw += fetched
+        any_ok = any_ok or ok
+    for token, company in GREENHOUSE_BOARDS.items():
+        fetched, ok = fetch_greenhouse(token, company, 80)
+        raw += fetched
+        any_ok = any_ok or ok
+    for site, company in LEVER_BOARDS.items():
+        fetched, ok = fetch_lever(site, company, 80)
+        raw += fetched
+        any_ok = any_ok or ok
+    fetched, ok = fetch_hn_hiring(40)
+    raw += fetched
+    any_ok = any_ok or ok
 
     seen, jobs = set(), []
     for r in raw:
