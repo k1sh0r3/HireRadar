@@ -5,7 +5,7 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>HireRadar — C2C, W-2, H-1B, OPT &amp; STEM OPT positions</title>
 <meta name="description" content="Fresh tech job listings filtered for C2C, W-2, H-1B sponsorship, OPT and STEM OPT friendliness. Updated automatically.">
-<link rel="stylesheet" href="assets/style.css">
+<link rel="stylesheet" href="assets/style.css?v=2">
 </head>
 <body>
 <header class="site-header">
@@ -32,6 +32,20 @@
       </div>
     </div>
     <div class="row row-small">
+      <label>Sort
+        <select id="sort">
+          <option value="priority" selected>Priority: Cincinnati → Remote</option>
+          <option value="newest">Newest first</option>
+        </select>
+      </label>
+      <label>My pipeline
+        <select id="app-status">
+          <option value="">All jobs</option>
+          <option value="saved">Saved</option>
+          <option value="applied">Applied</option>
+          <option value="active">Hide dismissed</option>
+        </select>
+      </label>
       <label>Source
         <select id="source"><option value="">All sources</option></select>
       </label>
@@ -44,6 +58,7 @@
           <option value="30">Last 30 days</option>
         </select>
       </label>
+      <label class="check"><input type="checkbox" id="ai-only"> AI/ML only</label>
       <label class="check"><input type="checkbox" id="remote-only"> Remote only</label>
       <label class="check"><input type="checkbox" id="has-contact"> Has recruiter contact</label>
       <button id="reset" type="button">Reset</button>
@@ -62,10 +77,10 @@
 <footer class="site-footer">
   <div class="wrap">
     <p>Listings aggregated from public job APIs. Always verify details on the original posting before applying.</p>
-    <p class="attr">Job data via JSearch, Adzuna, and Remotive · Refreshes daily.</p>
+    <p class="attr">Job data via JSearch, Adzuna, Remotive, Ashby, Greenhouse, Lever &amp; HN · Refreshes daily.</p>
   </div>
 </footer>
 
-<script src="assets/app.js?v=2"></script>
+<script src="assets/app.js?v=3"></script>
 </body>
 </html>
