@@ -9,6 +9,9 @@
     pills: document.getElementById("tag-pills"),
     source: document.getElementById("source"),
     age: document.getElementById("age"),
+    sort: document.getElementById("sort"),
+    appStatus: document.getElementById("app-status"),
+    aiOnly: document.getElementById("ai-only"),
     remoteOnly: document.getElementById("remote-only"),
     hasContact: document.getElementById("has-contact"),
     reset: document.getElementById("reset"),
@@ -20,6 +23,21 @@
     monster: document.getElementById("monster-link"),
   };
   const activeTags = new Set();
+
+  // --- application pipeline: applied / saved / dismissed, kept in this browser ---
+  const statusStore = {
+    get() {
+      try { return JSON.parse(localStorage.getItem("hireradar-status") || "{}"); }
+      catch { return {}; }
+    },
+    set(s) { localStorage.setItem("hireradar-status", JSON.stringify(s)); }
+  };
+  let jobStatus = statusStore.get();
+  function setJobStatus(id, s) {
+    if (s) jobStatus[id] = s; else delete jobStatus[id];
+    statusStore.set(jobStatus);
+    render();
+  }
 
   function esc(s) {
     return String(s == null ? "" : s)
@@ -171,17 +189,29 @@
       : `<div class="contact"><span class="nolink">No recruiter contact listed</span></div>`;
     const isNew = job.first_seen_at &&
       (Date.now() - new Date(job.first_seen_at).getTime()) < 3 * 86400000;
+    const extraPills =
+      (job.strong_match ? `<span class="tag strong">★ Strong match</span>` : "") +
+      (job.ai_ml ? `<span class="tag ai">AI/ML</span>` : "");
+    const salary = job.salary_text
+      ? `<span class="salary">${esc(job.salary_text)}</span>` : "";
+    const js = jobStatus[job.id] || "";
+    const statusRow = `<div class="status-row" role="group" aria-label="Track this job">
+      <button type="button" data-act="applied" data-id="${esc(job.id)}" class="${js === "applied" ? "on" : ""}">✓ Applied</button>
+      <button type="button" data-act="saved" data-id="${esc(job.id)}" class="${js === "saved" ? "on" : ""}">☆ Save</button>
+      <button type="button" data-act="dismissed" data-id="${esc(job.id)}" class="${js === "dismissed" ? "on" : ""}">✕ Dismiss</button>
+    </div>`;
     return `<article class="card">
       <h2><a href="${esc(job.apply_url)}" target="_blank" rel="noopener">${esc(job.title)}</a></h2>
       <p class="company">${esc(job.company)}${job.remote ? " · Remote" : ""}</p>
-      <div class="meta"><span>${esc(job.location || "Location not listed")}</span><span>Posted ${esc(fmtDate(job.posted_at))}</span>${isNew ? `<span class="new-badge">New</span>` : ""}</div>
-      <div class="tags">${tags}</div>
+      <div class="meta"><span>${esc(job.location || "Location not listed")}</span>${salary}<span>Posted ${esc(fmtDate(job.posted_at))}</span>${isNew ? `<span class="new-badge">New</span>` : ""}</div>
+      <div class="tags">${extraPills}${tags}</div>
       ${desc}
       ${contact}
       <div class="apply-row">
         <a class="apply" href="${esc(job.apply_url)}" target="_blank" rel="noopener">Apply</a>
         <span class="src">via ${esc(job.source || "job board")}</span>
       </div>
+      ${statusRow}
     </article>`;
   }
 
@@ -203,6 +233,12 @@
     }
     if (els.remoteOnly.checked && !job.remote) return false;
     if (els.hasContact.checked && !(job.recruiter_email || job.recruiter_phone)) return false;
+    if (els.aiOnly.checked && !job.ai_ml) return false;
+    const filter = els.appStatus.value;
+    const js = jobStatus[job.id];
+    if (filter === "saved" && js !== "saved") return false;
+    if (filter === "applied" && js !== "applied") return false;
+    if (filter === "active" && js === "dismissed") return false;
     return true;
   }
 
@@ -225,8 +261,10 @@
   }
 
   function render() {
+    const newestFirst = (a, b) => new Date(b.posted_at || 0) - new Date(a.posted_at || 0);
+    const priorityFirst = (a, b) => tier(a) - tier(b) || newestFirst(a, b);
     const jobs = state.jobs.filter(matches)
-      .sort((a, b) => tier(a) - tier(b) || new Date(b.posted_at || 0) - new Date(a.posted_at || 0));
+      .sort(els.sort.value === "newest" ? newestFirst : priorityFirst);
     els.results.innerHTML = jobs.map(cardHTML).join("");
     els.empty.hidden = jobs.length > 0;
     els.count.textContent = jobs.length.toLocaleString();
@@ -243,18 +281,25 @@
   });
 
   ["q", "loc"].forEach(id => els[id].addEventListener("input", render));
-  [els.source, els.age].forEach(el => el.addEventListener("change", render));
-  [els.remoteOnly, els.hasContact].forEach(el => el.addEventListener("change", render));
+  [els.source, els.age, els.sort, els.appStatus].forEach(el => el.addEventListener("change", render));
+  [els.remoteOnly, els.hasContact, els.aiOnly].forEach(el => el.addEventListener("change", render));
 
   els.reset.addEventListener("click", () => {
     els.q.value = ""; els.loc.value = ""; els.source.value = "";
-    els.age.value = "7"; els.remoteOnly.checked = false; els.hasContact.checked = false;
+    els.age.value = "7"; els.sort.value = "priority"; els.appStatus.value = "";
+    els.remoteOnly.checked = false; els.hasContact.checked = false; els.aiOnly.checked = false;
     activeTags.clear();
     els.pills.querySelectorAll("button").forEach(b => b.setAttribute("aria-pressed", "false"));
     render();
   });
 
   els.results.addEventListener("click", e => {
+    const actBtn = e.target.closest("button[data-act]");
+    if (actBtn) {
+      const id = actBtn.dataset.id, act = actBtn.dataset.act;
+      setJobStatus(id, jobStatus[id] === act ? null : act);  // toggle off when re-clicked
+      return;
+    }
     const more = e.target.closest(".more");
     if (!more) return;
     const full = els.results.querySelector(`[data-full="${more.dataset.i}"]`);

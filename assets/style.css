@@ -98,6 +98,16 @@ label { display: flex; align-items: center; gap: 8px; }
 .tag.h1b { background: #4a2f5a; color: #d3a6f0; }
 .tag.opt { background: #5a4326; color: #ffd9a0; }
 .tag.stem { background: #264a52; color: #9fe3e8; }
+.tag.ai { background: #12352b; color: #7ef0c1; }
+.tag.strong { background: #4a3413; color: #ffd166; }
+.salary { color: #9fe0b8; font-weight: 700; }
+.status-row { display: flex; gap: 8px; flex-wrap: wrap; }
+.status-row button {
+  background: transparent; border: 1px solid var(--border); color: var(--muted);
+  border-radius: 999px; padding: 5px 12px; cursor: pointer; font-size: 0.8rem; font-weight: 600;
+}
+.status-row button:hover { border-color: var(--accent); color: var(--text); }
+.status-row button.on { background: var(--accent); border-color: var(--accent); color: #0b1220; }
 .new-badge {
   background: #3a2b12; color: #ffd166; font-size: 0.72rem; font-weight: 700;
   padding: 2px 8px; border-radius: 999px; text-transform: uppercase; letter-spacing: 0.04em;
