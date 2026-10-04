@@ -63,11 +63,22 @@ ASHBY_BOARDS = {
     "openai": "OpenAI", "perplexity": "Perplexity", "elevenlabs": "ElevenLabs",
     "cohere": "Cohere", "cursor": "Cursor", "sierra": "Sierra",
     "writer": "Writer", "modal": "Modal", "langchain": "LangChain",
+    "deepgram": "Deepgram", "hebbia-ai": "Hebbia", "eliseai": "EliseAI",
+    "gptzero": "GPTZero", "bedrock-robotics": "Bedrock Robotics",
+    "linear": "Linear", "ramp": "Ramp", "gigaml": "GigaML", "decagon": "Decagon",
 }
 GREENHOUSE_BOARDS = {
     "anthropic": "Anthropic", "databricks": "Databricks", "scaleai": "Scale AI",
+    "assemblyai": "AssemblyAI", "gleanwork": "Glean", "togetherai": "Together AI",
+    "xai": "xAI", "stabilityai": "Stability AI", "snorkelai": "Snorkel AI",
+    "dataiku": "Dataiku", "figureai": "Figure AI", "inflectionai": "Inflection AI",
+    "labelbox": "Labelbox", "arizeai": "Arize AI", "vectara": "Vectara",
+    "sambanovasystems": "SambaNova", "inceptive": "Inceptive", "cresta": "Cresta",
 }
-LEVER_BOARDS = {"palantir": "Palantir"}
+LEVER_BOARDS = {
+    "palantir": "Palantir", "shieldai": "Shield AI",
+    "field-ai": "Field AI", "epoch-ai": "Epoch AI",
+}
 
 # Boards list every opening (sales, marketing, …) — keep tech roles only so
 # the board stays a tech board and the job cap isn't eaten by noise.
@@ -77,6 +88,102 @@ TECH_TITLE_RE = re.compile(
     r"\bqa\b|systems|infrastructure|platform|technical",
     re.IGNORECASE,
 )
+
+# AI/ML relevance — flags roles worth a closer look for AI job seekers.
+AI_ML_RE = re.compile(
+    r"machine learning|deep learning|\bllm\b|large language|artificial intelligence|"
+    r"\bml\b|\bai\b|data scien|mlops|generative ai|\bgenai\b|prompt engineer|"
+    r"\brag\b|fine[\s\-]?tun|diffusion|transformer|reinforcement learning|"
+    r"\bnlp\b|computer vision",
+    re.IGNORECASE,
+)
+
+# Exact target titles for an AI Software Engineer hunt — the strongest signal.
+STRONG_TITLE_KEYWORDS = (
+    "ai engineer", "machine learning", "ml engineer", "llm",
+    "applied ai", "genai", "ai software", "ai researcher",
+    "ai scientist", "ai developer", "prompt engineer",
+)
+
+
+def is_strong_match(title):
+    """True when the title is squarely an AI engineering role."""
+    t = (title or "").lower()
+    if any(k in t for k in STRONG_TITLE_KEYWORDS):
+        return True
+    return bool(re.search(r"\bai\b", t) and "engineer" in t)
+
+
+# Salary extraction — "$180k – $220k", "$75,000 - $85,000 per year", "up to $200k".
+SALARY_RANGE_RE = re.compile(
+    r"\$\s*([\d,]+(?:\.\d+)?)\s*([kK])?\s*(?:–|—|-|\bto\b)\s*\$?\s*([\d,]+(?:\.\d+)?)\s*([kK])?"
+)
+SALARY_SINGLE_RE = re.compile(
+    r"(?:up to|from|starting at|base salary:?|salary:?|pay:?)\s*\$\s*([\d,]+(?:\.\d+)?)\s*([kK])?"
+    r"|\$\s*([\d,]+(?:\.\d+)?)\s*([kK])?\s*(?:per hour|/hr\b|hourly)",
+    re.IGNORECASE,
+)
+HOURLY_RE = re.compile(r"per hour|/hr\b|hourly", re.IGNORECASE)
+
+
+def _sal_num(s, k):
+    try:
+        v = float(s.replace(",", ""))
+    except (ValueError, AttributeError):
+        return None
+    return int(v * 1000) if k else int(v)
+
+
+def extract_salary(text):
+    """Return (min_annual_usd, max_annual_usd, display_text) or (None, None, None)."""
+    if not text:
+        return None, None, None
+    t = text[:6000]
+    m = SALARY_RANGE_RE.search(t)
+    lo = hi = None
+    if m:
+        lo, hi = _sal_num(m.group(1), m.group(2)), _sal_num(m.group(3), m.group(4))
+    else:
+        m = SALARY_SINGLE_RE.search(t)
+        if m:
+            num, k = (m.group(1), m.group(2)) if m.group(1) else (m.group(3), m.group(4))
+            lo = hi = _sal_num(num, k)
+    if lo is None:
+        return None, None, None
+    window = t[max(0, m.start() - 40):m.end() + 40]
+    if HOURLY_RE.search(window):  # hourly rate -> annualize
+        lo = int(lo * 2080) if lo else None
+        hi = int(hi * 2080) if hi else None
+
+    def fmt(v):
+        if not v:
+            return ""
+        return f"${v / 1000:g}k" if v % 1000 == 0 else f"${v:,}"
+    if lo and hi and lo != hi:
+        disp = f"{fmt(lo)} – {fmt(hi)}"
+    else:
+        disp = fmt(lo or hi)
+    return lo, hi, disp
+
+
+# Fuzzy dedup — "Sr. ML Engineer" and "Senior Machine Learning Engineer" at the
+# same company/location are the same listing.
+_TITLE_NORM_RES = [
+    (re.compile(r"\bsr\.?\b"), "senior"),
+    (re.compile(r"\bjr\.?\b"), "junior"),
+    (re.compile(r"\bml\b"), "machine learning"),
+    (re.compile(r"\bswe\b"), "software engineer"),
+    (re.compile(r"[^a-z0-9 ]"), " "),
+    (re.compile(r"\s+"), " "),
+]
+
+
+def norm_key(title, company, location):
+    t = (title or "").lower()
+    for rx, rep in _TITLE_NORM_RES:
+        t = rx.sub(rep, t)
+    return job_id(t.strip(), company, location)
+
 
 # Role words used to tell "Role | Company" apart from "Company — Role".
 ROLE_CHUNK_RE = re.compile(
@@ -538,16 +645,19 @@ def main():
     raw += fetched
     any_ok = any_ok or ok
 
-    seen, jobs = set(), []
+    seen, norm_seen, jobs = set(), set(), []
     for r in raw:
         if not r["title"] or not r["apply_url"]:
             continue
         jid = job_id(r["title"], r["company"], r["location"])
-        if jid in seen:
+        nkid = norm_key(r["title"], r["company"], r["location"])
+        if jid in seen or nkid in norm_seen:
             continue
         seen.add(jid)
+        norm_seen.add(nkid)
         tags, negatives = classify(f"{r['title']} {r['description']}")
         email, phone = extract_contact(r["description"])
+        salary_min, salary_max, salary_text = extract_salary(r["description"])
         posted = None
         if r["posted_at"]:
             try:
@@ -573,6 +683,11 @@ def main():
             "sponsorship_notes": [f"no {n}" for n in negatives],
             "recruiter_email": email,
             "recruiter_phone": phone,
+            "ai_ml": bool(AI_ML_RE.search(f"{r['title']} {r['description'][:1500]}")),
+            "strong_match": is_strong_match(r["title"]),
+            "salary_min": salary_min,
+            "salary_max": salary_max,
+            "salary_text": salary_text,
         })
 
     # Merge with previous listings so each refresh accumulates instead of
@@ -587,10 +702,20 @@ def main():
                 previous[j["id"]] = j
     except Exception:  # noqa: BLE001
         pass
+    # Fuzzy map: normalized key -> stored id, so re-fetched near-dupes merge
+    # into the existing listing instead of duplicating it.
+    norm_to_id = {norm_key(j.get("title"), j.get("company"), j.get("location")): j["id"]
+                  for j in previous.values() if j.get("id")}
     for j in jobs:
         prev = previous.get(j["id"])
+        if prev is None:
+            pid = norm_to_id.get(norm_key(j["title"], j["company"], j["location"]))
+            prev = previous.get(pid) if pid else None
+            if prev is not None:
+                j["id"] = prev["id"]  # keep the original id and its history
         j["first_seen_at"] = prev.get("first_seen_at") if prev else now_iso
         previous[j["id"]] = j  # refresh all fields for re-fetched jobs
+        norm_to_id[norm_key(j["title"], j["company"], j["location"])] = j["id"]
     jobs = [j for j in previous.values() if not _too_old(j.get("posted_at"), cutoff)]
     jobs.sort(key=lambda j: j["posted_at"] or j.get("first_seen_at") or "", reverse=True)
     jobs = jobs[:max_total]
