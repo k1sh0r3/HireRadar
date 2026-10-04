@@ -217,9 +217,16 @@
     }
   }
 
+  function tier(job) {
+    // Priority order: Cincinnati first, then remote, then everything else.
+    if ((job.location || "").toLowerCase().includes("cincinnati")) return 0;
+    if (job.remote) return 1;
+    return 2;
+  }
+
   function render() {
     const jobs = state.jobs.filter(matches)
-      .sort((a, b) => new Date(b.posted_at || 0) - new Date(a.posted_at || 0));
+      .sort((a, b) => tier(a) - tier(b) || new Date(b.posted_at || 0) - new Date(a.posted_at || 0));
     els.results.innerHTML = jobs.map(cardHTML).join("");
     els.empty.hidden = jobs.length > 0;
     els.count.textContent = jobs.length.toLocaleString();
